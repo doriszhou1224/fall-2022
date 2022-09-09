@@ -36,6 +36,7 @@ function q1()
 
     A = rand(Uniform(-5,10), 10, 7)
     B = rand(Normal(-2, 15), 10,7)
+    # sd*randn(n, m).+mean
 
     sub_A = A[1:5, 1:5]
     sub_B = B[1:5, 6:7]
@@ -94,7 +95,7 @@ function q1()
  # k) Export D as tab-delimited file Dmatrix.dat
  
     D_df = DataFrame(D, :auto)
-    CSV.write("ProblemSets/PS1-julia-intro/Dmatrix.dat", D_df)
+    CSV.write("ProblemSets/PS1-julia-intro/Dmatrix.dat", D_df) # delim = "\t" 
 
     return A, B, C, D
 end
