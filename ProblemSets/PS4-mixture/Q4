@@ -1,0 +1,168 @@
+using Distributions
+using Optim
+using HTTP
+using GLM
+using LinearAlgebra
+using Random
+using Statistics
+using DataFrames
+using CSV
+using FreqTables
+using Random
+
+url = "https://raw.githubusercontent.com/OU-PhD-Econometrics/fall-2022/master/ProblemSets/PS4-mixture/nlsw88t.csv"
+df = CSV.read(HTTP.get(url).body, DataFrame)
+X = [df.age df.white df.collgrad]
+Z = hcat(df.elnwage1, df.elnwage2, df.elnwage3, df.elnwage4,
+         df.elnwage5, df.elnwage6, df.elnwage7, df.elnwage8)
+y = df.occ_code
+
+
+using DataStructures
+
+year = df.year
+c = counter(year)
+rep = maximum(values(c))
+beg_yr = minimum(keys(c))
+end_yr = maximum(keys(c))
+
+X_matrix = hcat(year, X)
+
+function make_3d_array(X_matrix)
+    matrix_3d = reshape(zeros(rep*size(X_matrix, 2)), (rep, size(X_matrix, 2)))
+    for y in beg_yr:end_yr
+        X_yr = X_matrix[X_matrix[:,1] .== y, :]
+
+        add_rows = rep - size(X_yr, 1)
+        miss_rows = repeat([0], add_rows, size(X_matrix, 2)-1)
+        miss_yr = repeat([y], add_rows, 1)
+        miss_total = vcat(X_yr, hcat(miss_yr, miss_rows))
+        matrix_3d = cat(matrix_3d, miss_total, dims=3)
+    end
+    return matrix_3d[:,Not(1),Not(1)]
+end
+
+X_3d = make_3d_array(X_matrix)
+
+Z_year = hcat(year, Z)
+Z_3d = make_3d_array(Z_year)
+
+y_year = hcat(year, y)
+y_3d = make_3d_array(y_year)
+
+function mlogit_with_Z_quad(theta, X, Z, y)
+
+    # parameters to estimate: alpha, gamma, μ_γ, σ_γ
+
+    alpha = theta[begin:end-3]
+    gamma = theta[end-2]
+    mu = theta[end-1]
+    sigma = theta[end]
+
+    dist_xi = Normal(mu, sigma)
+    nodes, weights = lgwt(7, -5*sigma, 5*sigma)
+    R = length(nodes)
+
+    N = size(X, 1)                      # 2249
+    K = size(X, 2)                      # 3
+    J = size(Z, 2)                      # 8
+    T = size(X, 3)                      # 21
+
+    bigY = zeros(2249,8, 21)
+
+    for t in 1:21
+        for j in 1:8
+            bigY[:,j, t] = y_3d[:,:,t].==j
+        end
+    end
+
+    bigAlpha = [reshape(alpha,K,J-1) zeros(K)] # 3 by 8
+    num_el = zeros(J)
+    dem_el = 0
+
+    loglike = 0
+    for i in 1:N
+        loglike_T = 0
+        for t in 1:T
+            quad_prod = zeros(R)
+            for r in 1:R
+                dem_el = 0
+                for j in 1:J
+                    num_el[j] = exp(X[i,:,t]'*bigAlpha[:,j] + (Z[i,j,t].-Z[i,J,t])*nodes[r]) #1 by 8
+                end
+                dem_el = sum(num_el)
+                for j in 1:J
+                    quad_prod[r] = weights[r]*prod((num_el[j] / dem_el).^bigY[i,j,t])*pdf.(dist_xi, nodes[r])
+                end
+            end
+            quad_sum = sum(quad_prod)
+            loglike_T += log(quad_sum)
+        end
+        loglike += loglike_T
+    end
+    return -loglike
+end
+
+startvals_quad = vcat(theta_hat_mle_ad, [1, 2])
+
+td = TwiceDifferentiable(theta -> mlogit_with_Z(theta, X_3d, Z_3d, y_3d), startvals; autodiff = :forward)
+theta_hat_optim_quad = optimize(td, startvals_quad, LBFGS(), Optim.Options(g_tol = 1e-5, iterations=100_000, show_trace=true, show_every=50))
+
+
+mlogit_with_Z_quad(startvals_quad, X_3d, Z_3d, y_3d)
+
+
+function mlogit_with_Z_montecarlo(theta, X, Z, y)
+
+    # parameters to estimate: alpha, gamma, μ_γ, σ_γ
+
+    alpha = theta[begin:end-3]
+    gamma = theta[end-2]
+    mu = theta[end-1]
+    sigma = theta[end]
+
+    nodes, weights = monte_carlo(D, -5*sigma, 5*sigma)
+
+    R = length(nodes)
+
+    N = size(X, 1)                      # 2249
+    K = size(X, 2)                      # 3
+    J = size(Z, 2)                      # 8
+    T = size(X, 3)                      # 21
+
+    bigY = zeros(2249,8, 21)
+
+    for t in 1:21
+        for j in 1:8
+            bigY[:,j, t] = y_3d[:,:,t].==j
+        end
+    end
+
+    bigAlpha = [reshape(alpha,K,J-1) zeros(K)] # 3 by 8
+    num_el = zeros(J)
+    dem_el = 0
+
+    loglike = 0
+    for i in 1:N
+        loglike_T = 0
+        for t in 1:T
+            quad_prod = zeros(R)
+            for r in 1:R
+                dem_el = 0
+                for j in 1:J
+                    num_el[j] = exp(X[i,:,t]'*bigAlpha[:,j] + (Z[i,j,t].-Z[i,J,t])*nodes[r]) #1 by 8
+                end
+                dem_el = sum(num_el)
+                for j in 1:J
+                    quad_prod[r] = weights*prod((num_el[j] / dem_el).^bigY[i,j,t])*pdf.(dist_xi, nodes[r])
+                end
+            end
+            quad_sum = sum(quad_prod)
+            loglike_T += log(quad_sum)
+        end
+        loglike += loglike_T
+    end
+    return -loglike
+end
+
+

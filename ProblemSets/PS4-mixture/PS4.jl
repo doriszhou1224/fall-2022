@@ -11,6 +11,9 @@ using FreqTables
 using Random
 using DataStructures
 
+using ForwardDiff
+using LineSearches
+
 url = "https://raw.githubusercontent.com/OU-PhD-Econometrics/fall-2022/master/ProblemSets/PS4-mixture/nlsw88t.csv"
 df = CSV.read(HTTP.get(url).body, DataFrame)
 X = [df.age df.white df.collgrad]
@@ -258,7 +261,7 @@ function ps4_main()
         # parameters to estimate: alpha, gamma, μ_γ, σ_γ
     
         alpha = theta[begin:end-2]
-        D = theta[end-1]
+        D = theta[end-1] # enter D as argument instead of to be estimated 
         sigma = theta[end]
     
         nodes, weights = monte_carlo(D, -5*sigma, 5*sigma)
@@ -308,3 +311,51 @@ function ps4_main()
     return nothing
 
 end
+
+# Q4 solution
+
+include("lgwt.jl")
+
+function mixlogit_quad_with_Z(theta, X, Z, y, R)     
+    alpha = theta[1:end-2]
+    gamma = theta[end-1]
+    sigma = exp(theta[end]) # makes sure sigma is never 0 (which would make the Normal density undefined)
+    K = size(X,2)
+    J = length(unique(y))
+    N = length(y)
+    bigY = zeros(N,J)
+    for j=1:J
+        bigY[:,j] = y.==j
+    end
+    bigAlpha = [reshape(alpha,K,J-1) zeros(K)]
+    
+    # now write P as a function of variable of integration
+    T = promote_type(eltype(X),eltype(theta))
+    function like_int(T,N,J,X,Z,bigAlpha,gamma,sigma,R)
+        nodes, weights = lgwt(R,gamma-4*sigma,gamma+4*sigma)
+        out = zeros(T,N)
+        for r=1:R
+            num   = zeros(T,N,J)
+            dem   = zeros(T,N)
+            P     = zeros(T,N,J)
+            for j=1:J
+                num[:,j] = exp.(X*bigAlpha[:,j] .+ (Z[:,j] .- Z[:,J])*nodes[r])
+                dem .+= num[:,j]
+            end
+            P = num./repeat(dem,1,J)
+            out .+= vec( weights[r]*( prod(P.^bigY; dims=2) )*pdf(Normal(gamma,sigma),nodes[r]) ) # why do we have to use vec here? because vectors in Julia are "flat" and the vec operator flattens a one-dimensional array.
+        end
+        return out
+    end
+    
+    intlike = like_int(T,N,J,X,Z,bigAlpha,gamma,sigma,R)
+    loglike = -sum(log.(intlike))
+    return loglike
+end
+
+startvals = [-.0493358;-.7359427;1.161792;-.0127601;.1499798;-2.438863;.0979789;.6508201;-4.049595;.055819;.2773671;-4.34042;.0203963;-.6880248;-4.794188;.1288023;-.9974547;-7.914539;.118583;-.7813687;-5.609388;4.50982;2.2925]
+    td = TwiceDifferentiable(theta -> mixlogit_quad_with_Z(theta, X, Z, y, 7), startvals; autodiff = :forward)
+    # run the optimizer
+    println("optimizing quadrature mixed logit")
+    theta_hat_mix_optim_ad = optimize(td, startvals, Newton(linesearch = BackTracking()), Optim.Options(g_tol = 1e-5, iterations=100_000, show_trace=true, show_every=1))
+    theta_hat_mix_optim_ad = theta_hat_mix_optim_ad.minimizer
