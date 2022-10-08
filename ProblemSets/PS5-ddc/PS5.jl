@@ -22,7 +22,7 @@ df = CSV.read(HTTP.get(url).body, DataFrame)
 
 
 # create bus id variable
-df = @transform(df, bus_id = 1:size(df,1)) # 1000 by 64
+df = @transform(df, :bus_id = 1:size(df,1)) # 1000 by 64
 
 #---------------------------------------------------
 # reshape from wide to long (must do this twice be-
@@ -90,12 +90,14 @@ zval,zbin,xval,xbin,xtran = create_grids()
 # c) Compute future value terms
 T = size(X, 2)
 row_xtran = size(xtran, 1)
-FV = reshape(zeros(row_xtran*2*(T+1)), row_xtran, 2, T+1)
 # Initialize future value array, 3D array of 0s. Dim_1 = row count of xtran, Dim_2 = 2, Dim_3 = T+1 = 21
 
 @views @inbounds function dynamic_choice(theta, zval, zbin, xval, xbin, xtran, X, Zst)
 
-    println("In here")
+    #println("In here")
+
+    FV = reshape(zeros(row_xtran*2*(T+1)), row_xtran, 2, T+1)
+
     theta_0 = theta[1]
     theta_1 = theta[2]
     theta_2 = theta[3]
@@ -108,17 +110,17 @@ FV = reshape(zeros(row_xtran*2*(T+1)), row_xtran, 2, T+1)
     # 4 nested for loops
 
     for t in T:-1:1
-        @show t
+        #@show t
         for b in 0:1
             for z in 1:zbin
                 for x in 1:xbin
                     xtran_row = x+(z-1)*xbin   # index the row of the transition matrix
 
-                    v_1t = [theta_0 + theta_1*xval[x] + theta_2*b] .+ xtran[xtran_row,:]'.*FV[(z-1)*xbin+1:z*xbin, b+1, t+1]
+                    v_1t = theta_0 + theta_1*xval[x] + theta_2*b + xtran[xtran_row,:]'*FV[(z-1)*xbin+1:z*xbin, b+1, t+1]
                     #@show v_1t
-                    v_0t = xtran[1+(z-1)*xbin,:]'.*FV[(z-1)*xbin+1:z*xbin, b+1, t+1]
+                    v_0t = xtran[1+(z-1)*xbin,:]'*FV[(z-1)*xbin+1:z*xbin, b+1, t+1]
                     #@show v_0t
-                    FV[xtran_row,b+1,t] = beta.*sum(log.(broadcast(exp, v_0t).+broadcast(exp, v_1t)))
+                    FV[xtran_row,b+1,t] = beta*(log(exp(v_0t)+exp(v_1t)))
                 end
             end
         end
@@ -141,13 +143,13 @@ FV = reshape(zeros(row_xtran*2*(T+1)), row_xtran, 2, T+1)
             #    tran_idx = X[i, t] + (Zst[i]-1)*xbin
             # end
 
-            v_1t = [theta_0 + theta_1*X[i, t] + theta_2*branded[i]] .+ xtran[X[i, t] + (Zst[i]-1)*xbin,:]'.*FV[(Zst[i]-1)*xbin+1:Zst[i]*xbin, branded[i]+1, t+1]
-            v_0t = xtran[1+(Zst[i]-1)*xbin,:]'.*FV[(Zst[i]-1)*xbin+1:Zst[i]*xbin, branded[i]+1, t+1]
+            v_1t = theta_0 + theta_1*X[i, t] + theta_2*branded[i] + xtran[X[i, t] + (Zst[i]-1)*xbin,:]'*FV[(Zst[i]-1)*xbin+1:Zst[i]*xbin, branded[i]+1, t+1]
+            v_0t = xtran[1+(Zst[i]-1)*xbin,:]'*FV[(Zst[i]-1)*xbin+1:Zst[i]*xbin, branded[i]+1, t+1]
 
-            P_1 = broadcast(exp, v_1t.-v_0t)./([1].+broadcast(exp, v_1t.-v_0t))
-            P_0 = [1].-P_1
+            P_1 = exp(v_1t-v_0t)/(1+exp(v_1t-v_0t))
+            P_0 = 1-P_1
 
-            log_like += Y[i, t]*sum(broadcast(log, P_1)) +(1-Y[i, t])*sum(P_0)
+            log_like += (Y[i, t]==1)*(log(P_1)) +(1-(Y[i, t]==0))*log(P_0)
         end
     end
 
@@ -155,6 +157,10 @@ FV = reshape(zeros(row_xtran*2*(T+1)), row_xtran, 2, T+1)
 end
 
 start_theta = coef(theta_hat)
+
+#@time theta_dynamic_ll(start_theta,zval, zbin, xval, xbin, xtran, X, Zst)
+#@time theta_dynamic_ll(start_theta,zval, zbin, xval, xbin, xtran, X, Zst)
+
 theta_dynamic_ll = optimize(theta -> dynamic_choice(theta, zval, zbin, xval, xbin, xtran, X, Zst),start_theta, LBFGS(),
                                     Optim.Options(g_tol=1e-5, iterations=100_000, show_trace=true))
 println(theta_dynamic_ll.minimizer)
