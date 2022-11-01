@@ -17,6 +17,7 @@ using MultivariateStats
 
 # load in the dataset
 
+function main_PS8()
 nlsy = CSV.read("ProblemSets/PS8-factor/nlsy.csv", DataFrame)
 
 # estimate a linear regression model
@@ -138,5 +139,10 @@ end
 startvals = zeros(45)
 theta_hat_quad = optimize(theta -> mle_quad(y, X, Xm, asvabMat, theta, 7), startvals, LBFGS(), Optim.Options(g_tol = 1e-5, iterations=100_000, show_trace=true, show_every=1))
 theta_hat_quad_ad = theta_hat_quad.minimizer
+println(theta_hat_quad_ad)
 
+return nothing
 
+end
+
+main_PS8()
